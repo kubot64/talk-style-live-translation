@@ -13,7 +13,17 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+#[cfg(not(target_os = "macos"))]
 const METADATA: &[u8] = include_bytes!("../scripts/punctuation-runtime.json");
+/// The same release and model, with the official Apple silicon library.
+#[cfg(target_os = "macos")]
+const METADATA: &[u8] = include_bytes!("../scripts/punctuation-runtime-macos.json");
+/// The C API library inside the runtime package.
+const LIBRARY: &str = if cfg!(windows) {
+    "sherpa-onnx-c-api.dll"
+} else {
+    "libsherpa-onnx-c-api.dylib"
+};
 const UNPACK_LIMIT: u64 = 512 * 1024 * 1024;
 const PATHS_MISMATCH: &str = "Punctuation paths do not match the isolated installation";
 
@@ -152,7 +162,7 @@ fn read_saved(release: &[u8], root: &Path) -> Result<Saved<PunctuationInstallati
         &package_root(&root, "runtime", &data.runtime),
         &data.runtime,
         &cancel,
-        "sherpa-onnx-c-api.dll",
+        LIBRARY,
     )?;
     let model = verify_package(
         &package_root(&root, "models", &data.model),
@@ -332,8 +342,11 @@ fn install_release(
 ) -> Result<PunctuationInstallation> {
     installer::cancelled(&cancel)?;
     ensure!(
-        cfg!(all(windows, target_arch = "x86_64")),
-        "Native punctuation supports Windows x64 only"
+        cfg!(any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )),
+        "Native punctuation supports Windows x64 and Apple silicon Macs only"
     );
     ensure!(
         root.is_absolute(),
@@ -363,7 +376,7 @@ fn install_release(
         &data.runtime,
         &cancel,
         &mut on_progress,
-        "sherpa-onnx-c-api.dll",
+        LIBRARY,
     )?;
     let model = install_package(
         &root,

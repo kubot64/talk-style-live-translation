@@ -309,7 +309,7 @@ struct Native {
     _library: libloading::Library,
 }
 impl Native {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     fn load(installation: &PunctuationInstallation) -> Result<Self> {
         let verified =
             punctuation_setup::load(&installation.root)?.context("Punctuation is not installed")?;
@@ -317,14 +317,27 @@ impl Native {
             &verified == installation,
             "Punctuation installation changed"
         );
-        check_onnxruntime_collision(&installation.library)?;
-        // Absolute DLL path, dependencies from its own directory/System32 only;
-        // no PATH edits or process-wide AddDllDirectory changes.
-        let library = unsafe {
-            libloading::os::windows::Library::load_with_flags(&installation.library, 0x100 | 0x800)
-        }
-        .context("Cannot load punctuation DLL; Microsoft Visual C++ v14 x64 runtime is required")?;
-        let library: libloading::Library = library.into();
+        #[cfg(windows)]
+        let library: libloading::Library = {
+            check_onnxruntime_collision(&installation.library)?;
+            // Absolute DLL path, dependencies from its own directory/System32 only;
+            // no PATH edits or process-wide AddDllDirectory changes.
+            unsafe {
+                libloading::os::windows::Library::load_with_flags(
+                    &installation.library,
+                    0x100 | 0x800,
+                )
+            }
+            .context(
+                "Cannot load punctuation DLL; Microsoft Visual C++ v14 x64 runtime is required",
+            )?
+            .into()
+        };
+        // Absolute path; the library finds libonnxruntime beside it through its
+        // own @rpath, so no DYLD_* variables are set.
+        #[cfg(target_os = "macos")]
+        let library = unsafe { libloading::Library::new(&installation.library) }
+            .context("Cannot load the punctuation library")?;
         let create: Create = unsafe { *library.get(b"SherpaOnnxCreateOfflinePunctuation\0")? };
         let destroy: Destroy = unsafe { *library.get(b"SherpaOnnxDestroyOfflinePunctuation\0")? };
         let add: Add = unsafe { *library.get(b"SherpaOfflinePunctuationAddPunct\0")? };
@@ -354,9 +367,9 @@ impl Native {
             _library: library,
         })
     }
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "macos")))]
     fn load(_installation: &PunctuationInstallation) -> Result<Self> {
-        bail!("Punctuation runtime supports Windows x64 only")
+        bail!("Punctuation runtime supports Windows x64 and macOS only")
     }
     fn punctuate(&self, text: &str) -> Result<String> {
         let text = CString::new(text)?;

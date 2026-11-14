@@ -10,3 +10,7 @@ scripts/nemotron-runtime.json text eol=lf
 scripts/paddle-ocr-runtime.json text eol=lf
 scripts/punctuation-runtime.json text eol=lf
 scripts/speech-runtime.json text eol=lf
+scripts/nemotron-runtime-macos.json text eol=lf
+scripts/punctuation-runtime-macos.json text eol=lf
+scripts/speech-runtime-macos.json text eol=lf
+*.sh text eol=lf

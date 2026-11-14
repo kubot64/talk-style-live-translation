@@ -13,9 +13,38 @@ pub fn app_root() -> PathBuf {
     if let Ok(exe) = std::env::current_exe()
         && let Some(dir) = exe.parent()
     {
+        if let Some(resources) = mac_bundle_resources(dir) {
+            return resources;
+        }
         return exe_folder_root(dir);
     }
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+/// `X.app/Contents/Resources` when the executable is `X.app/Contents/MacOS/*`.
+/// The bundle holds the scripts and the browser extension, but is never
+/// written to: that would break its code signature.
+fn mac_bundle_resources(dir: &Path) -> Option<PathBuf> {
+    let contents = dir.parent()?;
+    let bundle = contents.parent()?;
+    (dir.file_name()? == "MacOS"
+        && contents.file_name()? == "Contents"
+        && bundle.extension().is_some_and(|e| e == "app"))
+    .then(|| contents.join("Resources"))
+}
+
+/// Where a macOS app bundle keeps its data: `~/Library/Application Support/
+/// Talk風Live翻訳`. Outside a bundle (a `cargo run`, a plain folder) it is
+/// `data` in the app's folder, as on Windows.
+fn portable_root() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(dir) = exe.parent()
+        && mac_bundle_resources(dir).is_some()
+        && let Some(home) = std::env::var_os("HOME")
+    {
+        return PathBuf::from(home).join("Library/Application Support/Talk風Live翻訳");
+    }
+    app_root().join("data")
 }
 
 fn exe_folder_root(dir: &Path) -> PathBuf {
@@ -35,7 +64,7 @@ fn exe_folder_root(dir: &Path) -> PathBuf {
 
 /// Where settings, history, models and runtimes are kept: `PLAMO_DATA_DIR`
 /// when it is an absolute path, otherwise `data` in the app's folder, so the
-/// unzipped folder holds everything. A PC prepared by a version that kept them
+/// unzipped folder holds everything (a macOS app bundle uses Application Support). A PC prepared by a version that kept them
 /// under Local AppData goes on using that folder, so nothing is fetched again.
 /// Decided once, so every part of the app uses the same folder.
 pub fn data_root() -> PathBuf {
@@ -45,7 +74,7 @@ pub fn data_root() -> PathBuf {
             .map(|p| p.data_local_dir().to_path_buf());
         resolve(
             std::env::var_os("PLAMO_DATA_DIR").as_deref().map(Path::new),
-            &app_root().join("data"),
+            &portable_root(),
             earlier.as_deref(),
         )
     })

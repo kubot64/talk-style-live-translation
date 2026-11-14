@@ -35,11 +35,27 @@ tiny_http = "0.12"
 tungstenite = { version = "0.28", default-features = false, features = ["handshake"] }
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "4", default-features = false, features = ["deflate"] }
+flate2 = "1"
 
 [target.'cfg(windows)'.dependencies]
 wasapi = "0.22"
 windows = { version = "0.62", features = ["Foundation", "Globalization", "Graphics_Imaging", "Media_Ocr", "Storage_Streams", "Win32_Foundation", "Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common", "Win32_Media_Audio", "Win32_Media_Multimedia", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Diagnostics_ToolHelp", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_WinRT", "Win32_UI_WindowsAndMessaging"] }
 xcap = "0.8.2"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+xcap = "0.8.2"
+block2 = "0.6"
+dispatch2 = "0.3"
+objc2 = "0.6"
+objc2-foundation = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-core-media = "0.3"
+objc2-core-audio-types = "0.3"
+objc2-screen-capture-kit = "0.3"
+objc2-vision = "0.3"
+objc2-metal = "0.3"
+libc = "0.2"
 
 [profile.release]
 opt-level = 3

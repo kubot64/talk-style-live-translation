@@ -2,7 +2,7 @@
 use anyhow::{Context, Result, ensure};
 use std::{
     net::{SocketAddr, TcpListener},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Child, Command, ExitStatus},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -104,8 +104,8 @@ fn reap(child: &mut Child) {
     {
         let mut kill = Command::new("taskkill.exe");
         kill.args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
         let _ = crate::platform::hide_console(&mut kill).status();
     }
     let _ = child.kill();
@@ -211,7 +211,11 @@ fn listener_owner(port: u16) -> Result<Option<u32>> {
     }
     anyhow::bail!("The local OCR listener table kept changing")
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn listener_owner(port: u16) -> Result<Option<u32>> {
+    crate::macos::listener_owner(port)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn listener_owner(_port: u16) -> Result<Option<u32>> {
     Ok(None)
 }

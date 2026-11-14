@@ -2,6 +2,7 @@
 use super::setup_chain::Step;
 use super::*;
 use plamo_translate::installer;
+#[cfg(windows)]
 use std::process::Stdio;
 
 pub(super) fn kill_owned_child(child: &mut Child) {
@@ -598,7 +599,7 @@ impl App {
         let cancel = self.audio_cancel.clone();
         thread::spawn(move || {
             let selected_backend = backend.clone();
-            let result=(||->Result<()>{fs::create_dir_all(root.join("logs"))?;let log=fs::OpenOptions::new().create(true).append(true).open(root.join("logs/audio-setup.log"))?;
+            let result=(||->Result<()>{anyhow::ensure!(cfg!(windows), "Qwen3-ASRとWhisperの準備は、いまはWindows版だけです。Macでは英語の音声認識（Nemotron Speech）を使ってください。");fs::create_dir_all(root.join("logs"))?;let log=fs::OpenOptions::new().create(true).append(true).open(root.join("logs/audio-setup.log"))?;
                 let mut cmd=Command::new("powershell.exe");cmd.args(["-NoProfile","-ExecutionPolicy","Bypass","-File"]).arg(script).arg("-InstallRoot").arg(root).arg("-Backend").arg(backend).arg("-Device").arg(device).stdout(log.try_clone()?).stderr(log);platform::hide_console(&mut cmd);let mut child=cmd.spawn()?;
                 loop {
                     if cancel.load(Ordering::Relaxed) {

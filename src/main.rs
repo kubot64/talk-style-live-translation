@@ -91,7 +91,11 @@ struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         let root = app_root();
-        let venv = root.join(".venv/Scripts/python.exe");
+        let venv = if cfg!(windows) {
+            root.join(".venv/Scripts/python.exe")
+        } else {
+            root.join(".venv/bin/python3")
+        };
         Self {
             translation: TranslationOptions::default(),
             asr_endpoint: "http://127.0.0.1:17864".into(),
@@ -99,11 +103,14 @@ impl Default for Settings {
             asr_model: "nvidia/nemotron-speech-streaming-en-0.6b".into(),
             python: if venv.exists() {
                 venv.to_string_lossy().into()
-            } else {
+            } else if cfg!(windows) {
                 "python.exe".into()
+            } else {
+                "python3".into()
             },
             llama_server: root
-                .join("runtime/llama-b12119/llama-server.exe")
+                .join("runtime/llama-b12119")
+                .join(plamo_translate::installer::LLAMA_SERVER)
                 .to_string_lossy()
                 .into(),
             model: root
@@ -122,7 +129,12 @@ impl Default for Settings {
                 .join("models/chat_template.jinja")
                 .to_string_lossy()
                 .into(),
-            backend: "cuda".into(),
+            backend: if cfg!(target_os = "macos") {
+                "vulkan"
+            } else {
+                "cuda"
+            }
+            .into(),
             gpu_layers: 99,
             asr_device: "auto".into(),
             model_store: String::new(),

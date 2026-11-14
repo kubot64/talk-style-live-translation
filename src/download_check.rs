@@ -61,10 +61,39 @@ fn pinned() -> Result<Vec<(&'static str, Artifact)>> {
         ("英語の文章区切り補助", punctuation_setup::downloads()?),
         ("文字認識（Indra）", indra_setup::downloads()?),
         ("文字認識（PaddleOCR）", paddle_setup::downloads()?),
+        ("macOS版の実行環境", macos()?),
     ] {
         pins.extend(artifacts.into_iter().map(|artifact| (group, artifact)));
     }
     Ok(pins)
+}
+
+/// The Apple silicon runtimes. A Windows build reads its own manifests, so
+/// these are listed here to be checked from any OS.
+fn macos() -> Result<Vec<Artifact>> {
+    fn collect(value: &serde_json::Value, found: &mut Vec<Artifact>) {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Ok(artifact) = serde_json::from_value::<Artifact>(value.clone())
+                    && artifact.url.starts_with("https://")
+                {
+                    found.push(artifact);
+                }
+                map.values().for_each(|value| collect(value, found));
+            }
+            serde_json::Value::Array(values) => values.iter().for_each(|v| collect(v, found)),
+            _ => {}
+        }
+    }
+    let mut found = installer::macos_runtime_assets();
+    for manifest in [
+        include_str!("../scripts/nemotron-runtime-macos.json"),
+        include_str!("../scripts/punctuation-runtime-macos.json"),
+        include_str!("../scripts/speech-runtime-macos.json"),
+    ] {
+        collect(&serde_json::from_str(manifest)?, &mut found);
+    }
+    Ok(found)
 }
 
 // setup-audio.ps1 downloads these itself, so no Rust setup reads this file.

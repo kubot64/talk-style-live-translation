@@ -9,6 +9,8 @@ pub mod indra_setup;
 pub mod installer;
 pub mod journal;
 pub mod live_text;
+#[cfg(target_os = "macos")]
+pub mod macos;
 pub mod model_catalog;
 pub mod nemotron;
 pub mod nemotron_setup;

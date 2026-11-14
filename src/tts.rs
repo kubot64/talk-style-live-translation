@@ -172,7 +172,10 @@ impl TtsEngine {
         suppress_audio: Arc<AtomicBool>,
         profile: Option<VoiceProfile>,
     ) -> Result<Self> {
-        anyhow::ensure!(cfg!(windows), "この読み上げ再生機能はWindows専用です。");
+        anyhow::ensure!(
+            cfg!(any(windows, target_os = "macos")),
+            "この読み上げ再生機能はWindowsとMac専用です。"
+        );
         anyhow::ensure!(
             config.executable.is_absolute()
                 && config.executable.is_file()
@@ -640,7 +643,11 @@ fn listener_owner(port: u16) -> Result<Option<u32>> {
     bail!("読み上げの接続先を確認できませんでした。")
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn listener_owner(port: u16) -> Result<Option<u32>> {
+    crate::macos::listener_owner(port)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn listener_owner(_port: u16) -> Result<Option<u32>> {
     Ok(None)
 }
@@ -739,7 +746,16 @@ fn reset_playback(shared: &Shared) {
     }
 }
 
-#[cfg(not(windows))]
+/// `playback` holds the process ID of the `afplay` child on macOS.
+#[cfg(target_os = "macos")]
+fn reset_playback(shared: &Shared) {
+    let playing = shared.playback.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(pid) = *playing {
+        unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn reset_playback(_shared: &Shared) {}
 
 #[cfg(windows)]
@@ -849,7 +865,76 @@ fn play_wav(bytes: &[u8], shared: &Shared, epoch: u64, announce: bool, rate: f32
     result
 }
 
-#[cfg(not(windows))]
+/// Plays through `afplay`, which every macOS has. ScreenCaptureKit leaves out
+/// only this app's own audio, so `suppress` keeps the child's sound out of
+/// speech recognition, as on Windows.
+#[cfg(target_os = "macos")]
+fn play_wav(bytes: &[u8], shared: &Shared, epoch: u64, announce: bool, rate: f32) -> Result<()> {
+    let reader = hound::WavReader::new(std::io::Cursor::new(bytes))
+        .context("生成音声がWAV形式ではありません。")?;
+    let spec = reader.spec();
+    anyhow::ensure!(
+        spec.channels == 1
+            && spec.bits_per_sample == 16
+            && spec.sample_format == hound::SampleFormat::Int
+            && (8_000..=96_000).contains(&spec.sample_rate)
+            && reader.duration() > 0
+            && reader.duration() <= spec.sample_rate * 60,
+        "生成音声の形式または長さを確認できませんでした。"
+    );
+    let mut file = tempfile::Builder::new().suffix(".wav").tempfile()?;
+    std::io::Write::write_all(&mut file, bytes)?;
+    let mut child = {
+        let mut playing = shared.playback.lock().unwrap_or_else(|e| e.into_inner());
+        if cancelled(shared, epoch) {
+            return Ok(());
+        }
+        shared.suppress.store(true, Ordering::Release);
+        let child = Command::new("/usr/bin/afplay")
+            .arg(file.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .context("音声出力を開けませんでした。")?;
+        *playing = Some(child.id() as usize);
+        let _ = shared.events.send(TtsEvent::Rate(rate));
+        if announce {
+            let _ = shared.events.send(TtsEvent::Started);
+        }
+        child
+    };
+    let deadline = Instant::now() + Duration::from_secs(65);
+    let result = loop {
+        if cancelled(shared, epoch) {
+            let _ = child.kill();
+            break Ok(());
+        }
+        match child.try_wait() {
+            Ok(Some(_)) => break Ok(()),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(10)),
+            Ok(None) => {
+                let _ = child.kill();
+                break Err(anyhow::anyhow!("音声の再生が時間内に終了しませんでした。"));
+            }
+            Err(error) => break Err(error.into()),
+        }
+    };
+    let _ = child.wait();
+    {
+        let mut playing = shared.playback.lock().unwrap_or_else(|e| e.into_inner());
+        if *playing == Some(child.id() as usize) {
+            *playing = None;
+        }
+    }
+    if shared.suppress.load(Ordering::Acquire) {
+        thread::sleep(TAIL);
+        shared.suppress.store(false, Ordering::Release);
+    }
+    result
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
 fn play_wav(
     _bytes: &[u8],
     _shared: &Shared,

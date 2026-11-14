@@ -153,8 +153,11 @@ pub fn install(
 ) -> Result<PaddleInstallation> {
     installer::cancelled(cancel)?;
     ensure!(
-        cfg!(all(windows, target_arch = "x86_64")),
-        "PaddleOCRの配布版はWindows x64専用です。"
+        cfg!(any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )),
+        "PaddleOCRの配布版は、Windows x64とApple silicon搭載のMac専用です。"
     );
     let data = metadata()?;
     installer::safe_components(root, true)?;

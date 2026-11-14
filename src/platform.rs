@@ -1,4 +1,5 @@
-//! Local Windows screen capture, installed Windows OCR, and system-audio capture.
+//! Local screen capture, OS text recognition, and system-audio capture
+//! (Windows: WASAPI loopback and Windows OCR; macOS: ScreenCaptureKit and Vision).
 //! Audio is captured only while `capture_loopback`, `capture_loopback_suppressing` or
 //! `capture_loopback_streaming` is running; no microphone is opened.
 
@@ -65,7 +66,7 @@ pub fn hide_console(command: &mut std::process::Command) -> &mut std::process::C
     command
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn screens() -> Result<Vec<Screen>> {
     xcap::Monitor::all()
         .context("Could not enumerate displays")?
@@ -84,7 +85,7 @@ pub fn screens() -> Result<Vec<Screen>> {
         .collect()
 }
 
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn capture_screen(id: u32) -> Result<image::RgbaImage> {
     for monitor in xcap::Monitor::all().context("Could not enumerate displays")? {
         if monitor.id()? == id {
@@ -97,7 +98,7 @@ pub fn capture_screen(id: u32) -> Result<image::RgbaImage> {
 }
 
 /// Only the chosen area, in the pixels of a full capture of the display.
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "macos"))]
 pub fn capture_area(screen_id: u32, area: (u32, u32, u32, u32)) -> Result<image::RgbaImage> {
     let (x, y, width, height) = area;
     for monitor in xcap::Monitor::all().context("Could not enumerate displays")? {
@@ -181,7 +182,7 @@ pub fn capture_for_selection(screen_id: u32, owner: isize) -> Result<image::Rgba
         .map_err(|_| anyhow::anyhow!("画面の取得処理が停止しました。もう一度お試しください。"))?
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture_for_selection(_screen_id: u32, _owner: isize) -> Result<image::RgbaImage> {
     bail!("Display capture requires Windows")
 }
@@ -518,7 +519,7 @@ pub fn capture_loopback_suppressing(
     Ok(())
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 fn has_audio(samples: &[f32]) -> bool {
     if samples.is_empty() {
         return false;
@@ -527,23 +528,23 @@ fn has_audio(samples: &[f32]) -> bool {
     (energy / samples.len() as f64).sqrt() >= 0.0007
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn screens() -> Result<Vec<Screen>> {
     bail!("Display capture requires Windows")
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture_screen(_id: u32) -> Result<image::RgbaImage> {
     bail!("Display capture requires Windows")
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture_area(_screen_id: u32, _area: (u32, u32, u32, u32)) -> Result<image::RgbaImage> {
     bail!("Display capture requires Windows")
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn ocr(_image: &image::RgbaImage, _language: &str) -> Result<String> {
     bail!("Native OCR requires Windows")
 }
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture_loopback(
     _stop: Arc<AtomicBool>,
     _tx: SyncSender<AudioChunk>,
@@ -552,7 +553,7 @@ pub fn capture_loopback(
     bail!("System audio capture requires Windows")
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture_loopback_suppressing(
     stop: Arc<AtomicBool>,
     tx: SyncSender<AudioChunk>,
@@ -560,6 +561,178 @@ pub fn capture_loopback_suppressing(
     _suppress: Arc<AtomicBool>,
 ) -> Result<()> {
     capture_loopback(stop, tx, chunk_seconds)
+}
+
+/// Our window is left on screen: the area picker draws over the capture.
+#[cfg(target_os = "macos")]
+pub fn capture_for_selection(screen_id: u32, _owner: isize) -> Result<image::RgbaImage> {
+    capture_screen(screen_id)
+}
+
+#[cfg(target_os = "macos")]
+pub fn ocr(image: &image::RgbaImage, language: &str) -> Result<String> {
+    crate::macos::ocr(image, language)
+}
+
+#[cfg(target_os = "macos")]
+pub fn capture_loopback(
+    stop: Arc<AtomicBool>,
+    tx: SyncSender<AudioChunk>,
+    chunk_seconds: f32,
+) -> Result<()> {
+    capture_loopback_suppressing(stop, tx, chunk_seconds, Arc::new(AtomicBool::new(false)))
+}
+
+/// ScreenCaptureKit mix of every other app; this app's own read-aloud audio is
+/// already excluded, and `suppress` still drops the window while it plays.
+#[cfg(target_os = "macos")]
+pub fn capture_loopback_suppressing(
+    stop: Arc<AtomicBool>,
+    tx: SyncSender<AudioChunk>,
+    chunk_seconds: f32,
+    suppress: Arc<AtomicBool>,
+) -> Result<()> {
+    use crate::macos::{RATE, SystemAudio};
+    use std::{
+        sync::{
+            atomic::Ordering,
+            mpsc::{RecvTimeoutError, TrySendError},
+        },
+        time::{Duration, Instant},
+    };
+    if stop.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        chunk_seconds.is_finite(),
+        "Audio chunk duration must be finite"
+    );
+    let chunk_duration = Duration::from_secs_f32(chunk_seconds.clamp(2.0, 4.0));
+    let limit = (RATE as f32 * chunk_duration.as_secs_f32()) as usize;
+    let audio = SystemAudio::start()?;
+    let started = Instant::now();
+    let mut window_start = started;
+    let mut samples = Vec::with_capacity(limit);
+    let mut first_sample_ms = None;
+    let mut last_sample_ms = 0;
+    while !stop.load(Ordering::Acquire) {
+        match audio.packets.recv_timeout(Duration::from_millis(10)) {
+            Ok(packet) => {
+                if suppress.load(Ordering::Acquire) {
+                    samples.clear();
+                    first_sample_ms = None;
+                    window_start = Instant::now();
+                } else {
+                    let now_ms = started.elapsed().as_millis() as u64;
+                    let duration_ms = packet.samples.len() as u64 * 1_000 / RATE as u64;
+                    first_sample_ms.get_or_insert(now_ms.saturating_sub(duration_ms));
+                    last_sample_ms = now_ms;
+                    samples.extend_from_slice(&packet.samples);
+                }
+            }
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => bail!("PC音声の取得が止まりました。"),
+        }
+        if suppress.load(Ordering::Acquire) {
+            samples.clear();
+            first_sample_ms = None;
+            window_start = Instant::now();
+        }
+        if window_start.elapsed() >= chunk_duration || samples.len() >= limit {
+            if has_audio(&samples) {
+                let chunk = AudioChunk {
+                    samples: std::mem::take(&mut samples),
+                    sample_rate: RATE,
+                    start_ms: first_sample_ms.unwrap_or(last_sample_ms),
+                    end_ms: last_sample_ms,
+                };
+                match tx.try_send(chunk) {
+                    Ok(()) | Err(TrySendError::Full(_)) => {}
+                    Err(TrySendError::Disconnected(_)) => return Ok(()),
+                }
+            }
+            samples.clear();
+            first_sample_ms = None;
+            window_start = Instant::now();
+        }
+    }
+    if samples.len() >= RATE as usize / 3 && has_audio(&samples) {
+        let _ = tx.try_send(AudioChunk {
+            samples,
+            sample_rate: RATE,
+            start_ms: first_sample_ms.unwrap_or(last_sample_ms),
+            end_ms: last_sample_ms,
+        });
+    }
+    Ok(())
+}
+
+/// The streaming counterpart of the Windows WASAPI path, fed by ScreenCaptureKit.
+/// Packet positions come from the CoreMedia presentation clock; silence and
+/// suppression are framed exactly as on Windows.
+#[cfg(target_os = "macos")]
+pub fn capture_loopback_streaming(
+    stop: Arc<AtomicBool>,
+    tx: SyncSender<StreamingAudioFrame>,
+    frame_ms: u32,
+    suppress: Arc<AtomicBool>,
+) -> Result<()> {
+    use crate::macos::{RATE, SystemAudio};
+    use std::{
+        sync::{atomic::Ordering, mpsc::RecvTimeoutError},
+        time::{Duration, Instant},
+    };
+    let mut frames = StreamingFrames::new(frame_ms)?;
+    if stop.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let audio = SystemAudio::start()?;
+    let started = Instant::now();
+    let mut packet_clock = StreamingPacketClock::default();
+    let mut origin: Option<i64> = None;
+    while !stop.load(Ordering::Acquire) {
+        frames.suppress(suppress.load(Ordering::Acquire));
+        loop {
+            match audio.packets.recv_timeout(Duration::from_millis(5)) {
+                Ok(packet) => {
+                    frames.suppress(suppress.load(Ordering::Acquire));
+                    let count = packet.samples.len().min(32_000) as u32;
+                    let read_sample =
+                        (started.elapsed().as_nanos() * RATE as u128 / 1_000_000_000) as i64;
+                    let (clock_sample, reset) = if packet.clock_sample == i64::MIN {
+                        (read_sample - count as i64, true)
+                    } else {
+                        // Anchor the CoreMedia clock to this session's start once.
+                        let origin = *origin
+                            .get_or_insert(packet.clock_sample - (read_sample - count as i64));
+                        (packet.clock_sample - origin, false)
+                    };
+                    let (start, discontinuity) = packet_clock.position(clock_sample, count, reset);
+                    let pcm: Vec<i16> = if frames.suppressed {
+                        vec![0; count as usize]
+                    } else {
+                        packet.samples[..count as usize]
+                            .iter()
+                            .map(|&value| (value.clamp(-1.0, 1.0) * i16::MAX as f32).round() as i16)
+                            .collect()
+                    };
+                    frames.packet(start, &pcm, discontinuity);
+                }
+                Err(RecvTimeoutError::Timeout) => break,
+                Err(RecvTimeoutError::Disconnected) => bail!("PC音声の取得が止まりました。"),
+            }
+            if stop.load(Ordering::Acquire) {
+                return Ok(());
+            }
+        }
+        frames.suppress(suppress.load(Ordering::Acquire));
+        // ScreenCaptureKit delivers about every 10-20 ms; leave room for that.
+        let due = started.elapsed().saturating_sub(Duration::from_millis(60));
+        if !frames.emit_until((due.as_nanos() * RATE as u128 / 1_000_000_000) as u64, &tx) {
+            return Ok(());
+        }
+    }
+    Ok(())
 }
 
 /// Continuous 16 kHz, mono PCM16. Times are relative to this capture session.
@@ -572,7 +745,7 @@ pub struct StreamingAudioFrame {
     pub discontinuity: bool,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 struct StreamingFrames {
     frame_samples: usize,
     cursor: u64,
@@ -583,13 +756,13 @@ struct StreamingFrames {
 
 /// Preserve exact sample positions across packet boundaries. QPC is used only
 /// to anchor/re-anchor the stream, not to round each packet's sample position.
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 #[derive(Default)]
 struct StreamingPacketClock {
     next_sample: Option<i64>,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 impl StreamingPacketClock {
     /// Places one WASAPI loopback packet. The read time stands in only when
     /// Windows reports no valid timestamp.
@@ -631,7 +804,7 @@ impl StreamingPacketClock {
     }
 }
 
-#[cfg(any(windows, test))]
+#[cfg(any(windows, target_os = "macos", test))]
 impl StreamingFrames {
     fn new(frame_ms: u32) -> Result<Self> {
         anyhow::ensure!(
@@ -888,7 +1061,7 @@ pub fn capture_loopback_streaming(
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 pub fn capture_loopback_streaming(
     _stop: Arc<AtomicBool>,
     _tx: SyncSender<StreamingAudioFrame>,

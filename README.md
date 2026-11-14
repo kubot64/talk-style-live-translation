@@ -10,6 +10,8 @@ Nemotron と PLaMo をこのPCで動かし、PCで再生中の英語の音声を
 
 **[Windows版のダウンロード](https://github.com/yebisu0529-ship-it/talk-style-live-translation/releases)** · **1.0.0**
 
+> **Mac版（Apple silicon）**：このフォークでは、macOS 13以降のApple silicon搭載Macでも動くようにしています。入れ方とWindows版との違いは **[docs/MACOS.md](docs/MACOS.md)** を見てください。
+
 https://github.com/user-attachments/assets/24994065-11f1-486d-a089-330682f25c6c
 
 ## できること
@@ -65,6 +67,7 @@ https://github.com/user-attachments/assets/24994065-11f1-486d-a089-330682f25c6c
 - **[YouTube拡張機能の導入手順](extension/README.md)**：ブラウザ拡張の読み込みと接続手順
 - **[配布パッケージの構成・作成手順](docs/DISTRIBUTION.md)**：ポータブル版の構成とパッケージ作成方法
 - **[検証範囲](docs/VALIDATION.md)**：確かめた動作の範囲と、まだ確かめていないこと
+- **[Mac版](docs/MACOS.md)**：Apple silicon搭載Macでの入れ方、Windows版との違い、ビルド手順
 
 ## ライセンスとクレジット
 

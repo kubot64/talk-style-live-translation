@@ -2168,7 +2168,7 @@ impl App {
                     secondary(ui, "上の時間はモデルの音声処理単位です。表示までの時間には、文の区切りと翻訳の待ち時間も含まれます。");
                     ui.horizontal_wrapped(|ui| {
                         secondary(ui, "実行方式");
-                        for (value, label) in [("auto", "自動"), ("vulkan", "GPU · Vulkan"), ("cpu", "CPU")] {
+                        for (value, label) in [("auto", "自動"), ("vulkan", if cfg!(target_os = "macos") { "GPU · Metal" } else { "GPU · Vulkan" }), ("cpu", "CPU")] {
                             ui.selectable_value(&mut self.settings.asr_device, value.into(), label);
                         }
                     });

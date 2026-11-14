@@ -25,8 +25,8 @@ pub struct Gpu {
     pub cuda_eligible: bool,
     pub vulkan_eligible: bool,
     pub is_software: bool,
-    /// "nvidia-smi", "dxgi-local-budget", or "unknown"; DXGI is an OS budget,
-    /// not a measurement of the entire physical card's unused memory.
+    /// "nvidia-smi", "dxgi-local-budget", "metal-working-set" or "unknown"; DXGI
+    /// and Metal give an OS budget, not a measurement of the whole card's unused memory.
     pub memory_telemetry: String,
 }
 
@@ -46,7 +46,9 @@ pub fn detect(target: &Path) -> Result<Hardware> {
     };
     #[cfg(windows)]
     windows_detect(&ancestor, &mut hardware);
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    macos_detect(&ancestor, &mut hardware);
+    #[cfg(not(any(windows, target_os = "macos")))]
     hardware.warnings.push(
         "この配布版の詳細な容量検出はWindows専用です。未取得の容量は推定値で補っていません。"
             .into(),
@@ -191,8 +193,59 @@ pub fn refresh_gpu_memory(gpus: &mut [Gpu]) {
             }
         }
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "macos")]
+    for gpu in gpus.iter_mut().filter(|gpu| gpu.vendor == "apple") {
+        if let Some(free) = macos_gpu_free() {
+            gpu.free_vram_bytes = Some(free);
+        }
+    }
+    #[cfg(not(any(windows, target_os = "macos")))]
     let _ = gpus;
+}
+
+/// What the GPU can still take on Apple silicon: memory is unified, so it is the
+/// smaller of Metal's working-set budget and the memory not in active use.
+#[cfg(target_os = "macos")]
+fn macos_gpu_free() -> Option<u64> {
+    let (_, budget, _) = crate::macos::metal_gpu()?;
+    let (_, available) = crate::macos::memory();
+    Some(available.map_or(budget, |available| available.min(budget)))
+}
+
+/// Apple silicon: one Metal GPU sharing system memory. llama.cpp's Metal build
+/// is installed for the GPU backend, which this app names "vulkan" on every OS.
+#[cfg(target_os = "macos")]
+fn macos_detect(target: &Path, hardware: &mut Hardware) {
+    let (total, available) = crate::macos::memory();
+    hardware.ram_total_bytes = total;
+    hardware.ram_available_bytes = available;
+    hardware.disk_free_bytes = crate::macos::disk_free(target);
+    if hardware.disk_free_bytes.is_none() {
+        hardware
+            .warnings
+            .push("保存先ディスクの空き容量を確認できませんでした。".into());
+    }
+    match crate::macos::metal_gpu() {
+        Some((name, budget, _)) if cfg!(target_arch = "aarch64") => {
+            hardware.gpus.push(Gpu {
+                name,
+                vendor: "apple".into(),
+                dedicated_vram_bytes: Some(budget),
+                free_vram_bytes: macos_gpu_free(),
+                driver_version: None,
+                cuda_eligible: false,
+                vulkan_eligible: true,
+                is_software: false,
+                memory_telemetry: "metal-working-set".into(),
+            });
+        }
+        Some(_) => hardware
+            .warnings
+            .push("Intel MacのGPUは使いません。CPUで動かします。".into()),
+        None => hardware
+            .warnings
+            .push("Metalに対応したGPUが見つかりませんでした。CPUで動かします。".into()),
+    }
 }
 
 #[cfg(any(windows, test))]

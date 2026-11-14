@@ -19,6 +19,12 @@ use std::{
 };
 
 const RELEASE: &str = "b12119";
+/// The llama.cpp server inside the runtime folder.
+pub const LLAMA_SERVER: &str = if cfg!(windows) {
+    "llama-server.exe"
+} else {
+    "llama-server"
+};
 const MAX_UNPACKED: u64 = 2 * 1024 * 1024 * 1024;
 const TEMPLATE: &[u8] = include_bytes!("../scripts/plamo_template.jinja");
 const TEMPLATE_REVISION: &str = "f2b4599dff9b3e45c62567eac15e83186b4cb64e";
@@ -133,7 +139,8 @@ fn validate_request(request: &InstallRequest) -> Result<()> {
         "モデルのファイル名が不正です。"
     );
     ensure!(
-        matches!(request.backend.as_str(), "cpu" | "vulkan" | "cuda"),
+        matches!(request.backend.as_str(), "cpu" | "vulkan")
+            || (cfg!(windows) && request.backend == "cuda"),
         "未対応の実行バックエンドです。"
     );
     ensure!(
@@ -1091,7 +1098,40 @@ pub fn pending_download_bytes(request: &InstallRequest) -> u64 {
     remaining_total(&files)
 }
 
+/// The official Apple silicon llama.cpp build (Metal and CPU in one archive).
+const MACOS_RUNTIME: &[(&str, u64, &str)] = &[(
+    "llama-b12119-bin-macos-arm64.tar.gz",
+    16671812,
+    "51fc160bc6f6a6b53fef3c50d12b27314cfaf8fc37766fc605e0bd30d87a79b8",
+)];
+
+/// The macOS runtime, on every OS, so the download check covers it everywhere.
+pub(crate) fn macos_runtime_assets() -> Vec<Artifact> {
+    artifacts(MACOS_RUNTIME)
+}
+
+fn artifacts(rows: &[(&str, u64, &str)]) -> Vec<Artifact> {
+    rows.iter()
+        .map(|(name, bytes, sha256)| Artifact {
+            name: (*name).into(),
+            bytes: *bytes,
+            sha256: (*sha256).into(),
+            url: format!(
+                "https://github.com/ggml-org/llama.cpp/releases/download/{RELEASE}/{name}"
+            ),
+        })
+        .collect()
+}
+
 pub(crate) fn runtime_assets(backend: &str) -> Vec<Artifact> {
+    // On macOS the one official arm64 build carries both Metal (the GPU
+    // backend, "vulkan" in settings) and the CPU backend.
+    #[cfg(target_os = "macos")]
+    let rows: &[(&str, u64, &str)] = match backend {
+        "cpu" | "vulkan" if cfg!(target_arch = "aarch64") => MACOS_RUNTIME,
+        _ => &[],
+    };
+    #[cfg(not(target_os = "macos"))]
     let rows: &[(&str, u64, &str)] = match backend {
         "cpu" => &[(
             "llama-b12119-bin-win-cpu-x64.zip",
@@ -1117,16 +1157,7 @@ pub(crate) fn runtime_assets(backend: &str) -> Vec<Artifact> {
         ],
         _ => &[],
     };
-    rows.iter()
-        .map(|(name, bytes, sha256)| Artifact {
-            name: (*name).into(),
-            bytes: *bytes,
-            sha256: (*sha256).into(),
-            url: format!(
-                "https://github.com/ggml-org/llama.cpp/releases/download/{RELEASE}/{name}"
-            ),
-        })
-        .collect()
+    artifacts(rows)
 }
 
 pub(crate) fn archive_path(name: &str) -> Result<PathBuf> {
@@ -1166,7 +1197,7 @@ fn unpack(
     cancel: &AtomicBool,
     callback: &mut impl FnMut(Progress),
 ) -> Result<Vec<RuntimeFile>> {
-    unpack_runtime(archives, staging, cancel, callback, "llama-server.exe")
+    unpack_runtime(archives, staging, cancel, callback, LLAMA_SERVER)
 }
 
 pub(crate) fn unpack_runtime(
@@ -1176,6 +1207,9 @@ pub(crate) fn unpack_runtime(
     callback: &mut impl FnMut(Progress),
     executable: &str,
 ) -> Result<Vec<RuntimeFile>> {
+    #[cfg(not(windows))]
+    return unpack_unix_runtime(archives, staging, cancel, callback, executable);
+    #[allow(unreachable_code)]
     let mut files: BTreeMap<String, RuntimeFile> = BTreeMap::new();
     let mut total = 0_u64;
     for archive in archives {
@@ -1269,6 +1303,251 @@ pub(crate) fn unpack_runtime(
     Ok(files.into_values().collect())
 }
 
+/// One entry of an official macOS/Linux runtime archive.
+#[cfg(not(windows))]
+enum UnixEntry {
+    File { data: Vec<u8>, executable: bool },
+    Link(String),
+}
+
+/// `unpack_runtime` for macOS and Linux. Official archives there are ZIP or
+/// tar.gz/tar.bz2, keep a package folder, and use symbolic links between
+/// library versions. A link is written as a verified copy of the file it names,
+/// never as a link, so nothing outside the runtime folder can be reached. When
+/// `executable` has no folder and every entry is in one top folder, that folder
+/// is left out.
+#[cfg(not(windows))]
+pub(crate) fn unpack_unix_runtime(
+    archives: &[PathBuf],
+    staging: &Path,
+    cancel: &AtomicBool,
+    callback: &mut impl FnMut(Progress),
+    executable: &str,
+) -> Result<Vec<RuntimeFile>> {
+    use std::os::unix::fs::PermissionsExt;
+    let mut entries: BTreeMap<String, UnixEntry> = BTreeMap::new();
+    let mut total = 0_u64;
+    {
+        let mut add = |name: &str, entry: UnixEntry, size: u64| -> Result<()> {
+            total = total
+                .checked_add(size)
+                .context("アーカイブのサイズが不正です。")?;
+            ensure!(
+                total <= MAX_UNPACKED,
+                "アーカイブの展開サイズが2GiBを超えています。"
+            );
+            let key = archive_path(name)?.to_string_lossy().replace('\\', "/");
+            ensure!(
+                entries.insert(key, entry).is_none(),
+                "アーカイブに同じパスが二つあります。"
+            );
+            ensure!(
+                entries.len() <= 10000,
+                "アーカイブのファイル数が多すぎます。"
+            );
+            Ok(())
+        };
+        for archive in archives {
+            let name = archive
+                .file_name()
+                .map(|n| n.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            if name.ends_with(".zip") {
+                let mut zip = zip::ZipArchive::new(File::open(archive)?)?;
+                for i in 0..zip.len() {
+                    cancelled(cancel)?;
+                    let mut entry = zip.by_index(i)?;
+                    if entry.is_dir() {
+                        continue;
+                    }
+                    let mode = entry.unix_mode().unwrap_or(0);
+                    let size = entry.size();
+                    ensure!(size <= MAX_UNPACKED, "アーカイブのサイズが不正です。");
+                    let mut data = Vec::with_capacity(size as usize);
+                    (&mut entry).take(size + 1).read_to_end(&mut data)?;
+                    ensure!(
+                        data.len() as u64 == size,
+                        "アーカイブの展開が途中で終了しました。"
+                    );
+                    let name = entry.name().to_string();
+                    match mode & 0o170000 {
+                        0o120000 => add(&name, UnixEntry::Link(String::from_utf8(data)?), 0)?,
+                        0 | 0o100000 => add(
+                            &name,
+                            UnixEntry::File {
+                                data,
+                                executable: mode & 0o111 != 0,
+                            },
+                            size,
+                        )?,
+                        _ => bail!("アーカイブ内の特殊ファイルは展開できません。"),
+                    }
+                }
+            } else {
+                let input = File::open(archive)?;
+                let reader: Box<dyn Read> = if name.ends_with(".tar.gz") || name.ends_with(".tgz") {
+                    Box::new(flate2::read::GzDecoder::new(input))
+                } else if name.ends_with(".tar.bz2") {
+                    Box::new(bzip2::read::BzDecoder::new(input))
+                } else {
+                    bail!("未対応のアーカイブ形式です: {name}");
+                };
+                let mut tar = tar::Archive::new(reader);
+                for entry in tar.entries()? {
+                    cancelled(cancel)?;
+                    let mut entry = entry?;
+                    let path = entry.path()?.to_string_lossy().into_owned();
+                    let kind = entry.header().entry_type();
+                    if kind.is_dir()
+                        || kind.is_pax_global_extensions()
+                        || kind.is_pax_local_extensions()
+                    {
+                        continue;
+                    }
+                    if kind.is_symlink() {
+                        let target = entry
+                            .link_name()?
+                            .context("アーカイブのリンク先がありません。")?
+                            .to_string_lossy()
+                            .into_owned();
+                        add(&path, UnixEntry::Link(target), 0)?;
+                        continue;
+                    }
+                    ensure!(
+                        kind.is_file(),
+                        "アーカイブ内の特殊ファイルは展開できません。"
+                    );
+                    let size = entry.size();
+                    ensure!(size <= MAX_UNPACKED, "アーカイブのサイズが不正です。");
+                    let mode = entry.header().mode().unwrap_or(0o644);
+                    let mut data = Vec::with_capacity(size as usize);
+                    (&mut entry).take(size + 1).read_to_end(&mut data)?;
+                    ensure!(
+                        data.len() as u64 == size,
+                        "アーカイブの展開が途中で終了しました。"
+                    );
+                    add(
+                        &path,
+                        UnixEntry::File {
+                            data,
+                            executable: mode & 0o111 != 0,
+                        },
+                        size,
+                    )?;
+                }
+            }
+            progress(
+                callback,
+                "runtime_extract",
+                0,
+                None,
+                "実行環境を安全な一時フォルダーへ展開中",
+            );
+        }
+    }
+    // Resolve links to the regular file they finally name, inside the archive.
+    let resolve = |start: &str| -> Result<String> {
+        let mut current = start.to_string();
+        for _ in 0..16 {
+            match entries.get(&current) {
+                Some(UnixEntry::File { .. }) => return Ok(current),
+                Some(UnixEntry::Link(target)) => {
+                    ensure!(
+                        !target.starts_with('/'),
+                        "アーカイブのリンク先が外を指しています。"
+                    );
+                    let mut parts: Vec<&str> = current.split('/').collect();
+                    parts.pop();
+                    for part in target.split('/') {
+                        match part {
+                            "" | "." => {}
+                            ".." => {
+                                ensure!(
+                                    parts.pop().is_some(),
+                                    "アーカイブのリンク先が外を指しています。"
+                                )
+                            }
+                            part => parts.push(part),
+                        }
+                    }
+                    current = parts.join("/");
+                }
+                None => bail!("アーカイブのリンク先がありません: {start}"),
+            }
+        }
+        bail!("アーカイブのリンクが循環しています: {start}")
+    };
+    let mut resolved = BTreeMap::new();
+    for (key, entry) in &entries {
+        if let UnixEntry::Link(_) = entry {
+            resolved.insert(key.clone(), resolve(key)?);
+        }
+    }
+    let prefix = {
+        let tops: std::collections::BTreeSet<&str> = entries
+            .keys()
+            .map(|k| k.split('/').next().unwrap_or(""))
+            .collect();
+        match tops.iter().next() {
+            Some(top)
+                if tops.len() == 1
+                    && !executable.contains('/')
+                    && entries.keys().all(|k| k.contains('/')) =>
+            {
+                format!("{top}/")
+            }
+            _ => String::new(),
+        }
+    };
+    let mut files: BTreeMap<String, RuntimeFile> = BTreeMap::new();
+    for (key, entry) in &entries {
+        cancelled(cancel)?;
+        let (data, executable_bit) = match entry {
+            UnixEntry::File { data, executable } => (data, *executable),
+            UnixEntry::Link(_) => match &entries[&resolved[key]] {
+                UnixEntry::File { data, executable } => (data, *executable),
+                UnixEntry::Link(_) => unreachable!(),
+            },
+        };
+        let relative = key.strip_prefix(&prefix).unwrap_or(key).to_string();
+        let path = staging.join(archive_path(&relative)?);
+        safe_components(path.parent().unwrap(), true)?;
+        safe_file(&path)?;
+        ensure!(!path.exists(), "アーカイブ間で同名ファイルがあります。");
+        let temp = path.with_file_name(format!(".extract-{}", uuid::Uuid::new_v4()));
+        let mut output = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        output.write_all(data)?;
+        output.sync_all()?;
+        drop(output);
+        fs::set_permissions(
+            &temp,
+            fs::Permissions::from_mode(if executable_bit { 0o755 } else { 0o644 }),
+        )?;
+        fs::rename(temp, &path)?;
+        let folded = relative.to_ascii_lowercase();
+        ensure!(
+            !files.contains_key(&folded),
+            "アーカイブに大文字小文字が衝突するパスがあります。"
+        );
+        files.insert(
+            folded,
+            RuntimeFile {
+                path: relative,
+                bytes: data.len() as u64,
+                sha256: format!("{:x}", Sha256::digest(data)),
+            },
+        );
+    }
+    ensure!(
+        files.contains_key(&executable.to_ascii_lowercase()),
+        "アーカイブに{executable}がありません。"
+    );
+    Ok(files.into_values().collect())
+}
+
 fn verify_runtime(
     root: &Path,
     backend: &str,
@@ -1300,9 +1579,9 @@ fn verify_runtime(
             "保存済みの実行環境が破損しています: {}",
             file.path
         );
-        saw_server |= file.path == "llama-server.exe";
+        saw_server |= file.path == LLAMA_SERVER;
     }
-    ensure!(saw_server, "実行環境にllama-server.exeがありません。");
+    ensure!(saw_server, "実行環境に{LLAMA_SERVER}がありません。");
     Ok(())
 }
 
@@ -1357,7 +1636,7 @@ pub fn load_installation(root: &Path) -> Result<Option<InstallationManifest>> {
                 == root
                     .join("runtime")
                     .join(format!("llama-{RELEASE}-{}", manifest.backend))
-                    .join("llama-server.exe")
+                    .join(LLAMA_SERVER)
             && manifest.template_path
                 == root
                     .join("templates")
@@ -1472,7 +1751,7 @@ pub fn install(
     cancelled(&cancel)?;
     let result = InstallResult {
         model_path: model_path.clone(),
-        llama_server: runtime.join("llama-server.exe"),
+        llama_server: runtime.join(LLAMA_SERVER),
         template_path: template_path.clone(),
         backend: request.backend.clone(),
     };
@@ -2070,13 +2349,114 @@ mod tests {
         assert!(unpack(&[archive], &staging, &AtomicBool::new(false), &mut |_| {}).is_err());
         assert!(!staging.join("link").exists());
     }
+    /// The macOS llama.cpp archive: one top folder, versioned libraries reached
+    /// through links, and executables that must stay executable.
+    #[cfg(not(windows))]
+    #[test]
+    fn tar_runtime_drops_the_top_folder_and_copies_links_inside_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = Temp::new();
+        let archive = temp.0.join("llama-b12119-bin-macos-arm64.tar.gz");
+        {
+            let encoder = flate2::write::GzEncoder::new(
+                File::create(&archive).unwrap(),
+                flate2::Compression::fast(),
+            );
+            let mut tar = tar::Builder::new(encoder);
+            let mut add = |path: &str, data: &[u8], mode: u32| {
+                let mut header = tar::Header::new_gnu();
+                header.set_size(data.len() as u64);
+                header.set_mode(mode);
+                header.set_cksum();
+                tar.append_data(&mut header, path, data).unwrap();
+            };
+            add("llama-b12119/llama-server", b"server", 0o755);
+            add("llama-b12119/libggml.0.29.0.dylib", b"library", 0o755);
+            add("llama-b12119/LICENSE", b"license", 0o644);
+            let mut link = |path: &str, target: &str| {
+                let mut header = tar::Header::new_gnu();
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_size(0);
+                header.set_mode(0o755);
+                tar.append_link(&mut header, path, target).unwrap();
+            };
+            link("llama-b12119/libggml.0.dylib", "libggml.0.29.0.dylib");
+            link("llama-b12119/libggml.dylib", "libggml.0.dylib");
+            tar.into_inner().unwrap().finish().unwrap();
+        }
+        let staging = temp.0.join("runtime");
+        fs::create_dir(&staging).unwrap();
+        let files = unpack(
+            std::slice::from_ref(&archive),
+            &staging,
+            &AtomicBool::new(false),
+            &mut |_| {},
+        )
+        .unwrap();
+        let mut names: Vec<_> = files.iter().map(|f| f.path.as_str()).collect();
+        names.sort();
+        assert_eq!(
+            names,
+            [
+                "LICENSE",
+                "libggml.0.29.0.dylib",
+                "libggml.0.dylib",
+                "libggml.dylib",
+                "llama-server"
+            ]
+        );
+        let link = staging.join("libggml.dylib");
+        assert!(
+            !fs::symlink_metadata(&link)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read(link).unwrap(), b"library");
+        let mode = fs::metadata(staging.join("llama-server"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o755);
+        let mode = fs::metadata(staging.join("LICENSE"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o644);
+
+        // A link that leaves the archive is refused, and nothing is written.
+        let escape = temp.0.join("escape.tar.gz");
+        {
+            let encoder = flate2::write::GzEncoder::new(
+                File::create(&escape).unwrap(),
+                flate2::Compression::fast(),
+            );
+            let mut tar = tar::Builder::new(encoder);
+            let mut header = tar::Header::new_gnu();
+            header.set_size(6);
+            header.set_mode(0o755);
+            header.set_cksum();
+            tar.append_data(&mut header, "pkg/llama-server", &b"server"[..])
+                .unwrap();
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(tar::EntryType::Symlink);
+            header.set_size(0);
+            tar.append_link(&mut header, "pkg/passwd", "../../etc/passwd")
+                .unwrap();
+            tar.into_inner().unwrap().finish().unwrap();
+        }
+        let staging = temp.0.join("escape");
+        fs::create_dir(&staging).unwrap();
+        assert!(unpack(&[escape], &staging, &AtomicBool::new(false), &mut |_| {}).is_err());
+        assert!(fs::read_dir(&staging).unwrap().next().is_none());
+    }
     #[test]
     fn zip_runtime_fingerprints_detect_tampering() {
         let temp = Temp::new();
         let archive = temp.0.join("runtime.zip");
         let staging = temp.0.join("runtime");
         fs::create_dir(&staging).unwrap();
-        make_zip(&archive, "llama-server.exe", false);
+        make_zip(&archive, LLAMA_SERVER, false);
         let files = unpack(&[archive], &staging, &AtomicBool::new(false), &mut |_| {}).unwrap();
         let assets = runtime_assets("cpu");
         atomic_write(
@@ -2092,7 +2472,7 @@ mod tests {
         )
         .unwrap();
         verify_runtime(&staging, "cpu", &assets, &AtomicBool::new(false)).unwrap();
-        fs::write(staging.join("llama-server.exe"), b"evil").unwrap();
+        fs::write(staging.join(LLAMA_SERVER), b"evil").unwrap();
         assert!(verify_runtime(&staging, "cpu", &assets, &AtomicBool::new(false)).is_err());
     }
     #[test]
@@ -2291,7 +2671,7 @@ mod tests {
             .0
             .join("runtime")
             .join(format!("llama-{RELEASE}-cpu"))
-            .join("llama-server.exe");
+            .join(LLAMA_SERVER);
         let template_path = temp
             .0
             .join("templates")

@@ -373,7 +373,12 @@ fn run(
             "17864",
             "--no-ui",
             "--device",
-            &config.backend,
+            // The GPU backend is Vulkan on Windows and Metal on macOS.
+            if cfg!(target_os = "macos") && config.backend == "vulkan" {
+                "metal"
+            } else {
+                &config.backend
+            },
             "--asr.backend.gpu",
             if config.backend == "cpu" { "-1" } else { "0" },
             "--asr.streaming.rnnt_right_context",
@@ -701,7 +706,11 @@ fn listener_owner(port: u16) -> Result<Option<u32>> {
     }
     bail!("Nemotronの接続先情報が変化したため確認できません。")
 }
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn listener_owner(port: u16) -> Result<Option<u32>> {
+    crate::macos::listener_owner(port)
+}
+#[cfg(not(any(windows, target_os = "macos")))]
 fn listener_owner(_port: u16) -> Result<Option<u32>> {
     Ok(None)
 }

@@ -12,8 +12,15 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+#[cfg(not(target_os = "macos"))]
 const METADATA: &[u8] = include_bytes!("../scripts/speech-runtime.json");
+#[cfg(not(target_os = "macos"))]
 const RUNTIME_DIRECTORY: &str = "speech-0.10.1-windows-x64-vulkan";
+/// The same release and model with the official Apple silicon (Metal) build.
+#[cfg(target_os = "macos")]
+const METADATA: &[u8] = include_bytes!("../scripts/speech-runtime-macos.json");
+#[cfg(target_os = "macos")]
+const RUNTIME_DIRECTORY: &str = "speech-0.10.1-macos-arm64-metal";
 const RECORD_MISMATCH: &str = "読み上げのインストール記録が選択されたモデルと一致しません。";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -113,8 +120,11 @@ fn validate_backend(backend: &str) -> Result<()> {
 }
 fn check_platform() -> Result<()> {
     ensure!(
-        cfg!(all(windows, target_arch = "x86_64")),
-        "この読み上げ配布版はWindows x64専用です。"
+        cfg!(any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )),
+        "この読み上げ配布版は、Windows x64とApple silicon搭載のMac専用です。"
     );
     #[cfg(windows)]
     {
@@ -164,7 +174,11 @@ fn verify_runtime(root: &Path, spec: &RuntimeSpec, cancel: &AtomicBool) -> Resul
         )?;
         executable |= record.path == spec.executable;
     }
-    ensure!(executable, "読み上げ実行環境にspeech.exeがありません。");
+    ensure!(
+        executable,
+        "読み上げ実行環境に{}がありません。",
+        spec.executable
+    );
     Ok(())
 }
 /// Inspect only a committed, contained installation. The 1.92GB model was hashed

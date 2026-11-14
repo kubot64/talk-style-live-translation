@@ -13,7 +13,18 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+#[cfg(not(target_os = "macos"))]
 const METADATA: &[u8] = include_bytes!("../scripts/nemotron-runtime.json");
+/// The same release and model, with the official Apple silicon archives. The
+/// "vulkan" entry is the Metal build: the GPU backend has one name on every OS.
+#[cfg(target_os = "macos")]
+const METADATA: &[u8] = include_bytes!("../scripts/nemotron-runtime-macos.json");
+/// The recognizer inside the runtime archive.
+const EXECUTABLE: &str = if cfg!(windows) {
+    "nemo-speech.exe"
+} else {
+    "nemo-speech"
+};
 const RECORD_MISMATCH: &str = "Nemotronのインストール記録が、固定された配布情報と一致しません。";
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NemotronInstallation {
@@ -82,10 +93,17 @@ fn backend_spec<'a>(data: &'a Metadata, backend: &str) -> Result<&'a Artifact> {
         .context("Nemotronの実行方式はCPUまたはVulkanを選んでください。")
 }
 fn runtime_directory(data: &Metadata, backend: &str) -> String {
-    format!(
-        "nemo-speech-{}-windows-x86_64-{backend}",
-        data.runtime_version
-    )
+    if cfg!(target_os = "macos") {
+        format!(
+            "nemo-speech-{}-macos-aarch64-{backend}",
+            data.runtime_version
+        )
+    } else {
+        format!(
+            "nemo-speech-{}-windows-x86_64-{backend}",
+            data.runtime_version
+        )
+    }
 }
 fn expected(root: &Path, backend: &str, data: &Metadata, executable: &str) -> NemotronInstallation {
     NemotronInstallation {
@@ -120,9 +138,7 @@ fn verify_runtime(directory: &Path, spec: &Artifact, cancel: &AtomicBool) -> Res
     ensure!(
         index.artifact == *spec
             && !index.files.is_empty()
-            && executable
-                .file_name()
-                .is_some_and(|n| n == "nemo-speech.exe"),
+            && executable.file_name().is_some_and(|n| n == EXECUTABLE),
         "Nemotronの実行環境の記録が一致しません。"
     );
     let mut found = false;
@@ -143,6 +159,41 @@ fn verify_runtime(directory: &Path, spec: &Artifact, cancel: &AtomicBool) -> Res
     ensure!(found, "Nemotronの実行ファイルがありません。");
     Ok(index.executable)
 }
+/// The one recognizer in an official archive, with its package folder.
+fn archive_executable(archive: &Path, name: &str) -> Result<String> {
+    let mut executables = Vec::new();
+    if name.ends_with(".zip") {
+        let mut zip = zip::ZipArchive::new(fs::File::open(archive)?)?;
+        for i in 0..zip.len() {
+            let entry = zip.by_index(i)?;
+            let relative = installer::archive_path(entry.name())?;
+            if relative.file_name().is_some_and(|n| n == EXECUTABLE) {
+                executables.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    } else {
+        // The macOS archives are tar.gz: `<package>/bin/nemo-speech`.
+        let package = name.trim_end_matches(".tar.gz");
+        let mut tar = tar::Archive::new(flate2::read::GzDecoder::new(fs::File::open(archive)?));
+        for entry in tar.entries()? {
+            let entry = entry?;
+            let path = entry.path()?.to_string_lossy().replace('\\', "/");
+            let relative = installer::archive_path(&path)?;
+            if entry.header().entry_type().is_file()
+                && relative.file_name().is_some_and(|n| n == EXECUTABLE)
+                && relative.starts_with(package)
+            {
+                executables.push(relative.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    ensure!(
+        executables.len() == 1,
+        "Nemotronのアーカイブ内の実行ファイルを一意に特定できません。"
+    );
+    Ok(executables.remove(0))
+}
+
 /// Read only committed, pinned and contained installation; no model load/network.
 pub fn load(root: &Path) -> Result<Option<NemotronInstallation>> {
     read_saved(METADATA, root)?.current(RECORD_MISMATCH)
@@ -233,8 +284,11 @@ fn install_release(
     let spec = backend_spec(&data, backend)?;
     installer::cancelled(&cancel)?;
     ensure!(
-        cfg!(all(windows, target_arch = "x86_64")),
-        "Nemotronの配布版はWindows x64専用です。"
+        cfg!(any(
+            all(windows, target_arch = "x86_64"),
+            all(target_os = "macos", target_arch = "aarch64")
+        )),
+        "Nemotronの配布版は、Windows x64とApple silicon搭載のMac専用です。"
     );
     installer::safe_components(root, true)?;
     let root = fs::canonicalize(root)?;
@@ -283,20 +337,7 @@ fn install_release(
             &mut on_progress,
         )?;
         // Official archives contain a package directory. Preserve all DLLs and licenses.
-        let mut zip = zip::ZipArchive::new(fs::File::open(&archive)?)?;
-        let mut executables = Vec::new();
-        for i in 0..zip.len() {
-            let entry = zip.by_index(i)?;
-            let relative = installer::archive_path(entry.name())?;
-            if relative.file_name().is_some_and(|n| n == "nemo-speech.exe") {
-                executables.push(relative.to_string_lossy().replace('\\', "/"));
-            }
-        }
-        ensure!(
-            executables.len() == 1,
-            "NemotronのZIP内の実行ファイルを一意に特定できません。"
-        );
-        let executable = executables.remove(0);
+        let executable = archive_executable(&archive, &spec.name)?;
         let staging = runtime
             .parent()
             .unwrap()
