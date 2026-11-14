@@ -6,11 +6,11 @@
 
 translated by PLaMo
 
-Nemotron と PLaMo をこのPCで動かし、PCで再生中の英語の音声を、やさしい日本語にリアルタイムで訳してトーク風のチャットに出す、Windows用の翻訳アプリです。
+Nemotron と PLaMo をこのPCで動かし、PCで再生中の英語の音声を、やさしい日本語にリアルタイムで訳してトーク風のチャットに出す、Windows と Mac（Apple silicon）用の翻訳アプリです。
 
-**[Windows版のダウンロード](https://github.com/yebisu0529-ship-it/talk-style-live-translation/releases)** · **1.0.0**
+**[Windows版のダウンロード](https://github.com/yebisu0529-ship-it/talk-style-live-translation/releases)**（本家） · **[Mac版のダウンロード](https://github.com/kubot64/talk-style-live-translation/releases)**（このフォーク） · **1.0.0**
 
-> **Mac版（Apple silicon）**：このフォークでは、macOS 13以降のApple silicon搭載Macでも動くようにしています。入れ方とWindows版との違いは **[docs/MACOS.md](docs/MACOS.md)** を見てください。
+> このリポジトリは [yebisu0529-ship-it/talk-style-live-translation](https://github.com/yebisu0529-ship-it/talk-style-live-translation) のフォークで、Mac版を足したものです。Windows版のコードはそのまま残してあり、本家と同じようにビルドできます。
 
 https://github.com/user-attachments/assets/24994065-11f1-486d-a089-330682f25c6c
 
@@ -31,18 +31,29 @@ https://github.com/user-attachments/assets/24994065-11f1-486d-a089-330682f25c6c
 必要なときだけ使う機能です。
 
 - **YouTube字幕**：「YouTube字幕も訳す」をオンにすると、YouTubeの字幕（CC）も訳せます（初期値はオフ）。スイッチは、設定の「その他の機能」と、「⋯ その他」→「その他の機能」→「YouTube字幕の接続」の画面にあります。オンにすると、「⋯ その他」→「入力の切り替え」にYouTube字幕の入力が出ます。同梱の拡張機能を Chrome か Edge に読み込んで使います（手順は [extension/README.md](extension/README.md)）。
-- **多言語の音声認識**：英語以外の言語（中国語など）のPC音声は、多言語の音声認識で聞き取ります。設定の「翻訳する言語」で翻訳元を選び、「音声認識」で Qwen3-ASR（GPU・数GB）か Whisper（CPU・約4GB）を選んで、「音声認識を準備」を押します。どちらも大きなダウンロードです。Nemotron は英語だけを聞き取ります。
+- **多言語の音声認識**（Windows版のみ）：英語以外の言語（中国語など）のPC音声は、多言語の音声認識で聞き取ります。設定の「翻訳する言語」で翻訳元を選び、「音声認識」で Qwen3-ASR（GPU・数GB）か Whisper（CPU・約4GB）を選んで、「音声認識を準備」を押します。どちらも大きなダウンロードです。Nemotron は英語だけを聞き取ります。
 - **ダークモード**：「⋯ その他」→「表示」の「ダークモード」で、チャットを暗い色にします（初期値はオフ）。
 - **ミニ表示**（`Ctrl+Shift+M`）：同じチャットを小さな窓で読む表示です。上の行に「● 聞く」と、入るだけ「クリア」「全文コピー」「最前面」があります（入らないものは「⋯」の中です）。`Esc` で戻ります。
 - **その他の機能**：「範囲翻訳」（`Ctrl+Alt+T`）、「画面の文字を翻訳」「画像から翻訳」「ファイルを翻訳」「字幕ウィンドウ」などは、「⋯ その他」→「その他の機能」にあります。読み上げと文字認識の設定は、設定の最後の「その他の機能」にあります。
 
 ## 動作環境
 
+### Windows
+
 - Windows（x64）用です。翻訳は、NVIDIA の GPU（CUDA。ドライバー 551.61 以上）、Vulkan に対応した GPU、または CPU で動きます。
 - 翻訳モデルは、0.8B・2B・8B・31B の4つの大きさから選びます。GPUの空きが 16 GiB 以上なら 8B、それより少なければ 2B が「おすすめ」になります。GPUのメモリやディスクの空きなどが足りない大きさは選べず、その理由がモデルを選ぶ画面に出ます。GPUのないPC（CPUかNPUだけのPC）では、0.8B だけを選べます。
 - 確かめたのは、Windows 11 と RTX 4090 のPC 1台だけです。AMD と Intel の GPU、ほかのPCでは、まだ確かめていません（[検証範囲](docs/VALIDATION.md)）。
 
+### Mac
+
+- macOS 13（Ventura）以降の、Apple silicon（M1 以降）搭載Mac用です。Intel Mac には対応していません。
+- 翻訳と英語の音声認識は、Metal（GPU）か CPU で動きます。モデルの大きさの選び方は Windows版と同じで、GPUのメモリの代わりに、Metal が使えるメモリ（ユニファイドメモリの一部）で決まります。
+- 多言語の音声認識（Qwen3-ASR・Whisper）と Indra OCR は、まだ使えません。画面の文字認識は、macOS 標準の文字認識（Vision）を使います。
+- GitHub Actions の macOS 環境でビルドと検査をしています。実機での音声の取得と翻訳は、まだ確かめていません。Windows版との違いの一覧は [Mac版の説明](docs/MACOS.md) にあります。
+
 ## はじめかた
+
+### Windows
 
 1. [Releases](https://github.com/yebisu0529-ship-it/talk-style-live-translation/releases) から `talk-style-live-translation-1.0.0-win-x64.zip` をダウンロードし、好きなフォルダに展開します。
 2. 展開したフォルダの `Talk風Live翻訳.cmd` を開きます（PythonやRustの事前導入は不要です）。
@@ -55,19 +66,30 @@ https://github.com/user-attachments/assets/24994065-11f1-486d-a089-330682f25c6c
    ![初回のモデル準備画面](assets/screenshots/first-run.png)
 4. 準備が終わると、チャットが開きます。「● 聞く」を押して、英語の動画や音声を再生します。
 
+### Mac
+
+1. [Releases](https://github.com/kubot64/talk-style-live-translation/releases) から `talk-style-live-translation-<版>-macos-arm64.zip` をダウンロードして開き、`Talk風Live翻訳.app` を「アプリケーション」フォルダへ移します。
+2. 最初の1回だけ、Finderでアプリを右クリック →「開く」を選び、確認の画面で「開く」を押します（Apple の開発者署名がないためです）。
+3. 初回の画面で翻訳モデルの大きさを選び、「はじめる」を押します。準備するものと量は Windows版と同じです。保存先は `~/Library/Application Support/Talk風Live翻訳` です。
+4. 「● 聞く」を初めて押すと、「画面収録とシステムオーディオ録音」の許可を求められます。「システム設定」→「プライバシーとセキュリティ」で「Talk風Live翻訳」をオンにして、アプリを開き直してください。PCで再生中の音声を取り出すために使います（マイクは使わず、画面の映像は保存も送信もしません）。
+
+詳しくは [Mac版の説明](docs/MACOS.md) を見てください。
+
+### 起動したあと
+
 起動するたびに、翻訳モデルを読み込むあいだ、チャットのいちばん下に「準備中…」が出ます（RTX 4090 で 8B を読み込んだときは、約10秒でした）。「準備完了」になると、「● 聞く」を押せます。起動してはじめてPC音声を聞くときも、音声認識を読み込むあいだ「準備中…」が出ます。
 
 ## プライバシー
 
-翻訳・音声認識・文字認識・読み上げは、すべてこのPCの中で動きます。モデルを最初にダウンロードするときのほかは、原文・画像・字幕・音声を外のサーバーへ送りません。
+翻訳・音声認識・文字認識・読み上げは、Windows でも Mac でも、すべてこのPCの中で動きます。モデルを最初にダウンロードするときのほかは、原文・画像・字幕・音声を外のサーバーへ送りません。
 
 ## 詳しい説明
 
+- **[Mac版](docs/MACOS.md)**：Apple silicon搭載Macでの入れ方、Windows版との違い、ビルド手順
 - **[詳細仕様・動作要件・ライセンス](docs/SPECIFICATIONS.md)**：画面ごとの動き、モデル容量、対応GPUドライバー、ローカルポート、ビルド手順、各モデルのライセンス一覧
 - **[YouTube拡張機能の導入手順](extension/README.md)**：ブラウザ拡張の読み込みと接続手順
 - **[配布パッケージの構成・作成手順](docs/DISTRIBUTION.md)**：ポータブル版の構成とパッケージ作成方法
 - **[検証範囲](docs/VALIDATION.md)**：確かめた動作の範囲と、まだ確かめていないこと
-- **[Mac版](docs/MACOS.md)**：Apple silicon搭載Macでの入れ方、Windows版との違い、ビルド手順
 
 ## ライセンスとクレジット
 

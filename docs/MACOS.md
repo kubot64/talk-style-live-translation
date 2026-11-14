@@ -10,6 +10,7 @@ Windows版と同じアプリを、Apple silicon（M1〜）のMacで動かすた�
 ## はじめかた
 
 1. [Releases](https://github.com/kubot64/talk-style-live-translation/releases) から `talk-style-live-translation-<版>-macos-arm64.zip` をダウンロードして開き、`Talk風Live翻訳.app` を「アプリケーション」フォルダへ移します。
+   - Releases にまだZIPがないときは、[GitHub Actions の macOS の実行結果](https://github.com/kubot64/talk-style-live-translation/actions/workflows/macos.yml)の最新の成功した回から、「talk-style-live-translation-macos-arm64」をダウンロードできます（GitHub へのログインが必要です）。
 2. 最初の1回だけ、Finderでアプリを **右クリック →「開く」** を選び、確認の画面で「開く」を押します。
    - Apple の開発者署名がない（アドホック署名の）アプリのため、ダブルクリックだけでは「開発元を確認できない」と出て開けません。
    - それでも開けないときは、ターミナルで `xattr -dr com.apple.quarantine "/Applications/Talk風Live翻訳.app"` を実行してから開きます。
