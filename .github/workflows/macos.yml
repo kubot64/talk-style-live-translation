@@ -64,5 +64,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           tag="${GITHUB_REF#refs/tags/}"
-          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" --title "$tag" --notes "macOS (Apple silicon) build. See docs/MACOS.md."
+          flags=()
+          if [[ "$tag" == *-* ]]; then flags+=(--prerelease); fi
+          gh release view "$tag" >/dev/null 2>&1 || gh release create "$tag" "${flags[@]}" \
+            --title "Talk風Live翻訳 ${tag#v}（Mac版・Apple silicon）" \
+            --notes "Apple silicon搭載Mac（macOS 13以降）向けのビルドです。入れ方とWindows版との違いは docs/MACOS.md を見てください。初回はFinderでアプリを右クリック→「開く」で開きます。"
           gh release upload "$tag" dist/*.zip dist/*.sha256 --clobber
