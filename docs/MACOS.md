@@ -9,7 +9,7 @@ Windows版と同じアプリを、Apple silicon（M1〜）のMacで動かすた�
 
 ## はじめかた
 
-1. [Releases](https://github.com/kubot64/talk-style-live-translation/releases) から `talk-style-live-translation-<版>-macos-arm64.zip` をダウンロードして開き、`Talk風Live翻訳.app` を「アプリケーション」フォルダへ移します。
+1. [Mac版の最新リリース](https://github.com/kubot64/talk-style-live-translation/releases/tag/mac-latest)から `talk-style-live-translation-<版>-macos-arm64.zip` をダウンロードして開き、`Talk風Live翻訳.app` を「アプリケーション」フォルダへ移します。
    - Releases にまだZIPがないときは、[GitHub Actions の macOS の実行結果](https://github.com/kubot64/talk-style-live-translation/actions/workflows/macos.yml)の最新の成功した回から、「talk-style-live-translation-macos-arm64」をダウンロードできます（GitHub へのログインが必要です）。
 2. 最初の1回だけ、Finderでアプリを **右クリック →「開く」** を選び、確認の画面で「開く」を押します。
    - Apple の開発者署名がない（アドホック署名の）アプリのため、ダブルクリックだけでは「開発元を確認できない」と出て開けません。
@@ -48,7 +48,7 @@ scripts/package-macos.sh 1.0.0
 
 `dist/Talk風Live翻訳.app` と `dist/talk-style-live-translation-1.0.0-macos-arm64.zip` ができます。`.cargo/config.toml` の既定のターゲットは Windows なので、`cargo` を直接使うときは `--target aarch64-apple-darwin` を付けてください（例：`cargo run --target aarch64-apple-darwin`）。
 
-GitHub Actions（`.github/workflows/macos.yml`）でも、push のたびに同じZIPを作り、`v*` のタグでは Release に添付します。
+GitHub Actions（`.github/workflows/macos.yml`）でも同じZIPを作ります。`main` への push のたびに `mac-latest` のプレリリースを作り直して最新のZIPを置き、`v*` のタグを付けたときは、そのタグのリリースにもZIPを添付します。
 
 ## 固定している取得先（Mac用）
 

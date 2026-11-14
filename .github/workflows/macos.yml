@@ -49,7 +49,7 @@ jobs:
 
       - name: Package
         run: |
-          version="1.0.0"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then version="${GITHUB_REF#refs/tags/v}"; fi
           scripts/package-macos.sh "$version"
 
@@ -72,3 +72,16 @@ jobs:
             --title "Talk風Live翻訳 ${tag#v}（Mac版・Apple silicon）" \
             --notes "Apple silicon搭載Mac（macOS 13以降）向けのビルドです。入れ方とWindows版との違いは docs/MACOS.md を見てください。初回はFinderでアプリを右クリック→「開く」で開きます。"
           gh release upload "$tag" dist/*.zip dist/*.sha256 --clobber
+
+      # Every push to main replaces the "mac-latest" pre-release, so the newest
+      # Mac ZIP can always be downloaded without signing in to GitHub.
+      - name: Publish the latest build
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete mac-latest --yes --cleanup-tag 2>/dev/null || true
+          gh release create mac-latest dist/*.zip dist/*.sha256 \
+            --target "$GITHUB_SHA" --prerelease \
+            --title "Mac版（最新・Apple silicon）" \
+            --notes "main の最新（${GITHUB_SHA::7}）から自動で作った、Apple silicon搭載Mac（macOS 13以降）向けのZIPです。初回はFinderでアプリを右クリック→「開く」で開きます。入れ方とWindows版との違いは docs/MACOS.md を見てください。"

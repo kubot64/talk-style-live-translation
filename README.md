@@ -8,7 +8,7 @@ translated by PLaMo
 
 Nemotron と PLaMo をこのPCで動かし、PCで再生中の英語の音声を、やさしい日本語にリアルタイムで訳してトーク風のチャットに出す、Windows と Mac（Apple silicon）用の翻訳アプリです。
 
-**[Windows版のダウンロード](https://github.com/yebisu0529-ship-it/talk-style-live-translation/releases)**（本家） · **[Mac版のダウンロード](https://github.com/kubot64/talk-style-live-translation/releases)**（このフォーク） · **1.0.0**
+**[Windows版のダウンロード](https://github.com/yebisu0529-ship-it/talk-style-live-translation/releases)**（本家） · **[Mac版のダウンロード](https://github.com/kubot64/talk-style-live-translation/releases/tag/mac-latest)**（このフォーク） · **1.0.0**
 
 > このリポジトリは [yebisu0529-ship-it/talk-style-live-translation](https://github.com/yebisu0529-ship-it/talk-style-live-translation) のフォークで、Mac版を足したものです。Windows版のコードはそのまま残してあり、本家と同じようにビルドできます。
 
@@ -68,7 +68,7 @@ https://github.com/user-attachments/assets/24994065-11f1-486d-a089-330682f25c6c
 
 ### Mac
 
-1. [Releases](https://github.com/kubot64/talk-style-live-translation/releases) から `talk-style-live-translation-<版>-macos-arm64.zip` をダウンロードして開き、`Talk風Live翻訳.app` を「アプリケーション」フォルダへ移します。
+1. [Mac版の最新リリース](https://github.com/kubot64/talk-style-live-translation/releases/tag/mac-latest)から `talk-style-live-translation-<版>-macos-arm64.zip` をダウンロードして開き、`Talk風Live翻訳.app` を「アプリケーション」フォルダへ移します。
 2. 最初の1回だけ、Finderでアプリを右クリック →「開く」を選び、確認の画面で「開く」を押します（Apple の開発者署名がないためです）。
 3. 初回の画面で翻訳モデルの大きさを選び、「はじめる」を押します。準備するものと量は Windows版と同じです。保存先は `~/Library/Application Support/Talk風Live翻訳` です。
 4. 「● 聞く」を初めて押すと、「画面収録とシステムオーディオ録音」の許可を求められます。「システム設定」→「プライバシーとセキュリティ」で「Talk風Live翻訳」をオンにして、アプリを開き直してください。PCで再生中の音声を取り出すために使います（マイクは使わず、画面の映像は保存も送信もしません）。
