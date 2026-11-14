@@ -428,6 +428,38 @@ fn install_release(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The pinned Apple silicon library unpacks and loads with its ONNX runtime.
+    /// Run with `--ignored` (needs network).
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "downloads the pinned runtime"]
+    fn macos_library_unpacks_and_loads() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = metadata_of(METADATA).unwrap();
+        let archive = temp.path().join(&data.runtime.name);
+        installer::download_official(
+            &data.runtime,
+            &archive,
+            &AtomicBool::new(false),
+            "test",
+            &mut |_| {},
+        )
+        .unwrap();
+        let staging = temp.path().join("runtime");
+        fs::create_dir(&staging).unwrap();
+        let files = unpack(&archive, &staging, &AtomicBool::new(false)).unwrap();
+        let library = files
+            .iter()
+            .find(|file| file.path.ends_with(&format!("/{LIBRARY}")))
+            .unwrap();
+        let library = unsafe { libloading::Library::new(staging.join(&library.path)) }.unwrap();
+        unsafe {
+            library
+                .get::<unsafe extern "C" fn()>(b"SherpaOnnxCreateOfflinePunctuation\0")
+                .unwrap();
+        }
+    }
     use crate::installer::fixtures::{self, Folder};
 
     const LICENSE: &[u8] = b"test licence text";

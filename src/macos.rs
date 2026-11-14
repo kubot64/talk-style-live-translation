@@ -527,6 +527,34 @@ mod tests {
     use super::*;
 
     #[test]
+    fn vision_reads_the_text_of_a_screenshot() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/assets/screenshots/simple-translation.png"
+        );
+        let image = image::open(path).unwrap().to_rgba8();
+        let text = ocr(&image, "ja").unwrap();
+        assert!(text.lines().count() >= 3, "{text}");
+        assert!(text.contains("翻訳"), "{text}");
+    }
+
+    #[test]
+    fn the_audio_output_class_registers_and_takes_the_protocol() {
+        let (tx, _rx) = sync_channel(1);
+        let output = AudioOutput::new(tx);
+        let object: &ProtocolObject<dyn SCStreamOutput> = ProtocolObject::from_ref(&*output);
+        assert!(object.respondsToSelector(objc2::sel!(stream:didOutputSampleBuffer:ofType:)));
+    }
+
+    #[test]
+    fn capacity_is_read_from_the_system() {
+        let (total, available) = memory();
+        assert!(total.unwrap() >= 4 << 30);
+        assert!(available.unwrap() <= total.unwrap());
+        assert!(disk_free(std::path::Path::new("/")).unwrap() > 0);
+    }
+
+    #[test]
     fn converter_passes_16k_through_and_halves_32k() {
         let mut c = Converter::default();
         assert_eq!(c.convert(&[0.5, 2.0], 16_000.0), vec![0.5, 1.0]);

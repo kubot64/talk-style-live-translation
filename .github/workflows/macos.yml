@@ -42,6 +42,9 @@ jobs:
           macos:: platform::tests installer::tests::tar_runtime
           storage:: hardware:: live_text:: glossary:: subtitles::
 
+      - name: Runtime smoke test (downloads the pinned runtimes)
+        run: cargo test --locked --target aarch64-apple-darwin --lib -- --ignored macos_runtime_unpacks_and_runs macos_library_unpacks_and_loads
+
       - name: Package
         run: |
           version="1.0.0"

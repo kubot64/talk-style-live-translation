@@ -403,6 +403,39 @@ mod tests {
 
     const MODEL: &[u8] = b"test nemotron model";
 
+    /// The pinned Metal build unpacks as the installer does and starts.
+    /// Run with `--ignored` (needs network).
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "downloads the pinned runtime"]
+    fn macos_runtime_unpacks_and_runs() {
+        let temp = tempfile::tempdir().unwrap();
+        let data = metadata().unwrap();
+        let spec = backend_spec(&data, "vulkan").unwrap();
+        let archive = temp.path().join(&spec.name);
+        installer::download_official(spec, &archive, &AtomicBool::new(false), "test", &mut |_| {})
+            .unwrap();
+        let executable = archive_executable(&archive, &spec.name).unwrap();
+        let staging = temp.path().join("runtime");
+        fs::create_dir(&staging).unwrap();
+        installer::unpack_runtime(
+            &[archive],
+            &staging,
+            &AtomicBool::new(false),
+            &mut |_| {},
+            &executable,
+        )
+        .unwrap();
+        let output = std::process::Command::new(staging.join(&executable))
+            .arg("--version")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&output.stdout).into_owned()
+            + &String::from_utf8_lossy(&output.stderr);
+        assert!(output.status.success(), "{text}");
+        assert!(text.contains("0.3.0"), "{text}");
+    }
+
     fn release() -> Vec<u8> {
         let runtime = |backend: &str| {
             fixtures::artifact(

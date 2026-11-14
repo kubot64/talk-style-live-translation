@@ -2450,6 +2450,35 @@ mod tests {
         assert!(unpack(&[escape], &staging, &AtomicBool::new(false), &mut |_| {}).is_err());
         assert!(fs::read_dir(&staging).unwrap().next().is_none());
     }
+    /// Downloads the pinned macOS llama.cpp build, unpacks it as the installer
+    /// does and starts the server binary. Run with `--ignored` (needs network).
+    #[cfg(target_os = "macos")]
+    #[test]
+    #[ignore = "downloads the pinned runtime"]
+    fn macos_runtime_unpacks_and_runs() {
+        let temp = Temp::new();
+        let asset = runtime_assets("vulkan").remove(0);
+        let archive = temp.0.join(&asset.name);
+        download_official(
+            &asset,
+            &archive,
+            &AtomicBool::new(false),
+            "test",
+            &mut |_| {},
+        )
+        .unwrap();
+        let staging = temp.0.join("runtime");
+        fs::create_dir(&staging).unwrap();
+        unpack(&[archive], &staging, &AtomicBool::new(false), &mut |_| {}).unwrap();
+        let output = std::process::Command::new(staging.join(LLAMA_SERVER))
+            .arg("--version")
+            .output()
+            .unwrap();
+        let text = String::from_utf8_lossy(&output.stderr).into_owned()
+            + &String::from_utf8_lossy(&output.stdout);
+        assert!(output.status.success(), "{text}");
+        assert!(text.contains("12119"), "{text}");
+    }
     #[test]
     fn zip_runtime_fingerprints_detect_tampering() {
         let temp = Temp::new();
