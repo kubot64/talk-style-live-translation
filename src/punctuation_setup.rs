@@ -436,8 +436,10 @@ mod tests {
     #[ignore = "downloads the pinned runtime"]
     fn macos_library_unpacks_and_loads() {
         let temp = tempfile::tempdir().unwrap();
+        // /var is a link to /private/var on macOS; the installer refuses links.
+        let base = fs::canonicalize(temp.path()).unwrap();
         let data = metadata_of(METADATA).unwrap();
-        let archive = temp.path().join(&data.runtime.name);
+        let archive = base.as_path().join(&data.runtime.name);
         installer::download_official(
             &data.runtime,
             &archive,
@@ -446,7 +448,7 @@ mod tests {
             &mut |_| {},
         )
         .unwrap();
-        let staging = temp.path().join("runtime");
+        let staging = base.as_path().join("runtime");
         fs::create_dir(&staging).unwrap();
         let files = unpack(&archive, &staging, &AtomicBool::new(false)).unwrap();
         let library = files

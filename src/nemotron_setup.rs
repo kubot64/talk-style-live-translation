@@ -410,13 +410,15 @@ mod tests {
     #[ignore = "downloads the pinned runtime"]
     fn macos_runtime_unpacks_and_runs() {
         let temp = tempfile::tempdir().unwrap();
+        // /var is a link to /private/var on macOS; the installer refuses links.
+        let base = fs::canonicalize(temp.path()).unwrap();
         let data = metadata().unwrap();
         let spec = backend_spec(&data, "vulkan").unwrap();
-        let archive = temp.path().join(&spec.name);
+        let archive = base.as_path().join(&spec.name);
         installer::download_official(spec, &archive, &AtomicBool::new(false), "test", &mut |_| {})
             .unwrap();
         let executable = archive_executable(&archive, &spec.name).unwrap();
-        let staging = temp.path().join("runtime");
+        let staging = base.as_path().join("runtime");
         fs::create_dir(&staging).unwrap();
         installer::unpack_runtime(
             &[archive],
